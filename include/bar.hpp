@@ -69,6 +69,7 @@ class Bar : public sigc::trackable {
   void setVisible(bool value);
   void toggle();
   void handleSignal(int);
+  bool handleScroll(GdkEventScroll* e);
 
   struct waybar_output *output;
   Json::Value config;
@@ -110,6 +111,9 @@ class Bar : public sigc::trackable {
   Gtk::Box center_;
   Gtk::Box right_;
   Gtk::Box box_;
+  Gtk::EventBox event_box_;
+  double distance_scrolled_x_;
+  double distance_scrolled_y_;
   std::vector<std::shared_ptr<waybar::AModule>> modules_left_;
   std::vector<std::shared_ptr<waybar::AModule>> modules_center_;
   std::vector<std::shared_ptr<waybar::AModule>> modules_right_;
