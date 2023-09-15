@@ -68,6 +68,7 @@ class Bar {
   void setVisible(bool visible);
   void toggle();
   void handleSignal(int);
+  bool handleScroll(GdkEventScroll* e);
 
   struct waybar_output *output;
   Json::Value config;
@@ -109,6 +110,9 @@ class Bar {
   Gtk::Box center_;
   Gtk::Box right_;
   Gtk::Box box_;
+  double distance_scrolled_x_;
+  double distance_scrolled_y_;
+  Gtk::EventBox event_box_;
   std::vector<std::shared_ptr<waybar::AModule>> modules_left_;
   std::vector<std::shared_ptr<waybar::AModule>> modules_center_;
   std::vector<std::shared_ptr<waybar::AModule>> modules_right_;
