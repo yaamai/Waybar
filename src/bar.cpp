@@ -4,12 +4,14 @@
 #include <spdlog/spdlog.h>
 
 #include <type_traits>
+#include <util/command.hpp>
 
 #include "client.hpp"
 #include "factory.hpp"
 #include "group.hpp"
 #include "util/enum.hpp"
 #include "util/kill_signal.hpp"
+
 
 #ifdef HAVE_SWAY
 #include "modules/sway/bar.hpp"
@@ -318,7 +320,102 @@ waybar::Bar::Bar(struct waybar_output* w_output, const Json::Value& w_config)
     spdlog::debug("GTK widget tree:\n{}", gtk_tree);
     g_free(gtk_tree);
   }
+
+  if (config.isMember("actions")) {
+    if (config["actions"].isMember("on-scroll-up") || config["actions"].isMember("on-scroll-down")) {
+      spdlog::debug("adding root box scroll event");
+      event_box_.signal_scroll_event().connect(sigc::mem_fun(*this, &Bar::handleScroll));
+      event_box_.add_events(Gdk::SCROLL_MASK | Gdk::SMOOTH_SCROLL_MASK);
+    }
+  }
 }
+
+// copied from AModule...
+enum SCROLL_DIR { NONE, UP, DOWN, LEFT, RIGHT };
+SCROLL_DIR getScrollDir(Json::Value config, double& distance_scrolled_x, double& distance_scrolled_y, GdkEventScroll* e) {
+  // only affects up/down
+  bool reverse = config["reverse-scrolling"].asBool();
+  bool reverse_mouse = config["reverse-mouse-scrolling"].asBool();
+
+  // ignore reverse-scrolling if event comes from a mouse wheel
+  GdkDevice* device = gdk_event_get_source_device((GdkEvent*)e);
+  if (device != NULL && gdk_device_get_source(device) == GDK_SOURCE_MOUSE) {
+    reverse = reverse_mouse;
+  }
+
+  switch (e->direction) {
+    case GDK_SCROLL_UP:
+      return reverse ? SCROLL_DIR::DOWN : SCROLL_DIR::UP;
+    case GDK_SCROLL_DOWN:
+      return reverse ? SCROLL_DIR::UP : SCROLL_DIR::DOWN;
+    case GDK_SCROLL_LEFT:
+      return SCROLL_DIR::LEFT;
+    case GDK_SCROLL_RIGHT:
+      return SCROLL_DIR::RIGHT;
+    case GDK_SCROLL_SMOOTH: {
+      SCROLL_DIR dir{SCROLL_DIR::NONE};
+
+      distance_scrolled_y += e->delta_y;
+      distance_scrolled_x += e->delta_x;
+
+      gdouble threshold = 0;
+      if (config["smooth-scrolling-threshold"].isNumeric()) {
+        threshold = config["smooth-scrolling-threshold"].asDouble();
+      }
+
+      if (distance_scrolled_y < -threshold) {
+        dir = reverse ? SCROLL_DIR::DOWN : SCROLL_DIR::UP;
+      } else if (distance_scrolled_y > threshold) {
+        dir = reverse ? SCROLL_DIR::UP : SCROLL_DIR::DOWN;
+      } else if (distance_scrolled_x > threshold) {
+        dir = SCROLL_DIR::RIGHT;
+      } else if (distance_scrolled_x < -threshold) {
+        dir = SCROLL_DIR::LEFT;
+      }
+
+      switch (dir) {
+        case SCROLL_DIR::UP:
+        case SCROLL_DIR::DOWN:
+          distance_scrolled_y = 0;
+          break;
+        case SCROLL_DIR::LEFT:
+        case SCROLL_DIR::RIGHT:
+          distance_scrolled_x = 0;
+          break;
+        case SCROLL_DIR::NONE:
+          break;
+      }
+
+      return dir;
+    }
+    // Silence -Wreturn-type:
+    default:
+      return SCROLL_DIR::NONE;
+  }
+}
+
+bool waybar::Bar::handleScroll(GdkEventScroll* e) {
+  auto get_string2 = [this](const std::string& k1, const std::string& k2) -> std::optional<std::string> {
+    if (!config.isMember(k1)) return std::nullopt;
+    if (!config[k1].isMember(k2)) return std::nullopt;
+    if (!config[k1][k2].isString()) return std::nullopt;
+    return std::make_optional(config[k1][k2].asString());
+  };
+
+  auto dir = getScrollDir(config, distance_scrolled_x_, distance_scrolled_y_, e);
+  std::string ev_name;
+  if (dir == SCROLL_DIR::UP) {
+    ev_name = "on-scroll-up";
+  } else if (dir == SCROLL_DIR::DOWN) {
+    ev_name = "on-scroll-down";
+  }
+
+  if(auto cmd = get_string2("actions", ev_name)) {
+    util::command::forkExec(*cmd);
+  }
+  return true;
+}
+
 
 /* Need to define it here because of forward declared members */
 waybar::Bar::~Bar() = default;
@@ -582,7 +679,8 @@ void waybar::Bar::getModules(const Factory& factory, const std::string& pos,
 }
 
 auto waybar::Bar::setupWidgets() -> void {
-  window.add(box_);
+  window.add(event_box_);
+  event_box_.add(box_);
 
   bool expand_left = config["expand-left"].isBool() ? config["expand-left"].asBool() : false;
   bool expand_center = config["expand-center"].isBool() ? config["expand-center"].asBool() : false;
